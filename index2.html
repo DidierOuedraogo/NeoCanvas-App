@@ -1,0 +1,629 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>NeoCanvas Au – Intervalles & Mesh</title>
+<style>
+  :root{
+    --bg-0:#070918; --bg-1:#0b0f2a; --panel:#0a1026; --muted:#9db0d3; --text:#f1f5ff;
+    --grid:#173154; --axis-x:#60a5fa; --axis-y:#34d399; --axis-z:#f97316; --mesh:#c084fc;
+  }
+  *{box-sizing:border-box}
+  body{margin:0; font-family:Inter,system-ui,Segoe UI,Roboto,Arial; color:var(--text);
+    background: radial-gradient(1200px 600px at 10% 0%, rgba(167,139,250,.18), transparent 60%),
+                radial-gradient(1200px 600px at 90% 0%, rgba(56,189,248,.18), transparent 60%),
+                linear-gradient(180deg, var(--bg-0), var(--bg-1));}
+  header{position:sticky;top:0;z-index:10;background:rgba(8,12,30,.75);backdrop-filter:blur(8px);
+    border-bottom:1px solid #1f2a44;padding:10px 12px;display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center}
+  h1{margin:0;font-size:18px}
+  .actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+  .btn{background:#0c1230;border:1px solid #2b3e6f;color:#e6efff;padding:9px 12px;border-radius:10px;cursor:pointer;font-weight:700;font-size:12px}
+  .btn:hover{border-color:#60a5fa}
+  .btn.primary{background:#0d9488;border-color:#0f766e}
+  .btn.warn{background:#b45309;border-color:#b45309}
+  .btn.danger{background:#991b1b;border-color:#991b1b}
+  .container{display:grid;grid-template-columns:380px 1fr;gap:12px;padding:12px}
+  @media (max-width:1100px){.container{grid-template-columns:1fr}}
+  .panel{background:rgba(15,23,42,.9);border:1px solid #1f2a44;border-radius:12px;padding:12px}
+  .section{margin-bottom:14px}
+  .section h2{margin:0 0 8px;font-size:14px}
+  label{display:block;font-size:12px;color:var(--muted);margin:6px 0 4px}
+  input[type="number"], select, input[type="file"]{width:100%;padding:9px 10px;border-radius:10px;border:1px solid #243a64;background:#08112b;color:#e6efff}
+  .row{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .scroll{max-height:250px;overflow:auto;border:1px solid #1f2a44;border-radius:10px}
+  table{width:100%;border-collapse:collapse}
+  th,td{border-bottom:1px solid #1f2a44;padding:6px;font-size:12px;text-align:left}
+  .card{background:#0a112b;border:1px solid #1f2a44;border-radius:10px;padding:8px}
+  .log{font-family:ui-monospace,Consolas,Menlo,monospace;background:#08112b;border:1px dashed #2a3f77;color:#cfe2ff;border-radius:8px;padding:8px;max-height:160px;overflow:auto}
+  .canvas-wrap{position:relative}
+  canvas{width:100%;height:620px;background:#040a1a;border:1px solid #23345c;border-radius:12px}
+  .hud{position:absolute;left:10px;top:10px;display:flex;gap:6px;flex-wrap:wrap}
+  .legend{position:absolute;right:10px;bottom:8px;font-size:12px;color:#b7c8eb;background:rgba(8,13,28,.7);border:1px solid #1f2a44;padding:6px 8px;border-radius:8px}
+  footer{padding:10px;text-align:center;color:#b6c6ea;font-size:12px}
+</style>
+</head>
+<body>
+<header>
+  <h1>NeoCanvas Au – Intervalles & Mesh</h1>
+  <div class="actions">
+    <button id="btn-generate-demo" class="btn primary">Démo gisement</button>
+    <button id="btn-fit" class="btn">Ajuster vue</button>
+    <button id="btn-run" class="btn">Calcul intervalles</button>
+    <button id="btn-export-intervals" class="btn">Exporter intervalles</button>
+    <button id="btn-export-demo" class="btn">Exporter échantillons</button>
+    <button id="btn-reset" class="btn danger">Réinitialiser</button>
+  </div>
+</header>
+
+<div class="container">
+  <aside class="panel">
+    <div class="section">
+      <h2>Import échantillons</h2>
+      <div class="row">
+        <div>
+          <label for="file-samples">CSV/TXT</label>
+          <input id="file-samples" type="file" accept=".csv,.txt,.tsv" />
+        </div>
+        <div>
+          <label>Parsing</label>
+          <div class="row">
+            <select id="sep"><option value="auto">Auto</option><option value=",">,</option><option value=";">;</option><option value="\t">Tab</option></select>
+            <select id="dec"><option value=".">Décimales: .</option><option value=",">Décimales: ,</option></select>
+          </div>
+        </div>
+      </div>
+      <div class="section">
+        <h2>Mapping colonnes</h2>
+        <div class="row">
+          <div>
+            <label>HoleID</label><select id="col-holeid"></select>
+            <label>From</label><select id="col-from"></select>
+            <label>To</label><select id="col-to"></select>
+            <label>Length</label><select id="col-length"></select>
+          </div>
+          <div>
+            <label>X</label><select id="col-x"></select>
+            <label>Y</label><select id="col-y"></select>
+            <label>Z</label><select id="col-z"></select>
+            <label>Au</label><select id="col-au"></select>
+          </div>
+        </div>
+        <button id="btn-apply-mapping" class="btn" style="margin-top:8px">Appliquer</button>
+      </div>
+    </div>
+
+    <div class="section">
+      <h2>Mesh DXF</h2>
+      <input id="file-dxf" type="file" accept=".dxf" />
+      <div class="row" style="margin-top:8px">
+        <button id="btn-generate-mesh-demo" class="btn">Mesh démo</button>
+        <button id="btn-export-mesh" class="btn">Exporter mesh</button>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <div><label>Densification cible (m)</label><input id="densify-target" type="number" min="0.5" step="0.5" value="2.0"></div>
+        <div><label>Seuil peu dense (m)</label><input id="densify-threshold" type="number" min="1" step="0.5" value="3.0"></div>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <button id="btn-check-density" class="btn">Vérifier densité</button>
+        <button id="btn-densify" class="btn warn">Densifier</button>
+      </div>
+    </div>
+
+    <div class="section">
+      <h2>Paramètres intervalles</h2>
+      <div class="row">
+        <div><label>Coupure Au (g/t)</label><input id="cutoff" type="number" min="0" step="0.01" value="1.0"></div>
+        <div><label>Distance max (m)</label><input id="max-dist" type="number" min="0" step="0.1" value="30"></div>
+      </div>
+      <div class="row">
+        <div><label>Dilution stérile (m)</label><input id="dilution" type="number" min="0" step="0.1" value="2.0"></div>
+        <div><label>Agrégation</label><select id="agg"><option value="length-weighted">Pondérée longueur</option><option value="simple">Moyenne simple</option></select></div>
+      </div>
+    </div>
+
+    <div class="section">
+      <h2>Statistiques – Échantillons</h2>
+      <div id="stats-samples" class="card">-</div>
+      <button id="btn-export-stats-samples" class="btn" style="margin-top:8px">Exporter stats</button>
+    </div>
+
+    <div class="section">
+      <h2>Statistiques – Intervalles</h2>
+      <div id="stats-intervals" class="card">-</div>
+      <button id="btn-export-stats-intervals" class="btn" style="margin-top:8px">Exporter stats</button>
+    </div>
+
+    <div class="section">
+      <h2>Structure mesh</h2>
+      <div id="mesh-struct" class="card">-</div>
+    </div>
+
+    <div class="section">
+      <h2>Log</h2>
+      <div id="log" class="log"></div>
+    </div>
+  </aside>
+
+  <main class="panel">
+    <div class="section">
+      <h2>Vue 3D</h2>
+      <div class="canvas-wrap">
+        <canvas id="view" width="1400" height="740"></canvas>
+        <div class="hud">
+          <select id="color-mode" class="btn">
+            <option value="au">Couleur: Au</option>
+            <option value="status">Status</option>
+            <option value="dist">Distance</option>
+            <option value="none">Uniforme</option>
+          </select>
+          <button id="btn-capture" class="btn">Capture PNG</button>
+        </div>
+        <div class="legend">Pan: clic • Rotate: Shift+clic • Zoom: molette • Quadrillage 100 m • Mesh violet</div>
+      </div>
+    </div>
+
+    <div class="section">
+      <h2>Aperçus</h2>
+      <div class="row">
+        <div class="card"><div id="preview-samples" class="scroll"></div></div>
+        <div class="card"><div id="preview-intervals" class="scroll"></div></div>
+      </div>
+    </div>
+
+    <div class="section">
+      <h2>Résultats</h2>
+      <div class="card"><div id="results"></div></div>
+    </div>
+  </main>
+</div>
+
+<footer>© 2025 • Didier Ouedraogo, P.Geo. • NeoCanvas Au</footer>
+
+<script>
+// ---------- Etat global ----------
+let samples=[], intervals=[], triangles=[], grid=null, meshS=null;
+let sampleRaw=[]; let sepChoice='auto', decChoice='.';
+let lastSampleStats=null, lastIntervalStats=null;
+let meshName = 'mesh_demo'; // nom du mesh utilisé pour suffixer les exports
+
+// ---------- DOM ----------
+const logEl = document.getElementById('log');
+const canvas = document.getElementById('view'); const ctx = canvas.getContext('2d');
+
+// ---------- Utils ----------
+function log(m){ const t=new Date().toLocaleTimeString(); logEl.textContent = `[${t}] ${m}\n` + logEl.textContent; }
+function fmt(x,d=2){ if (x==null||!isFinite(x)) return ''; const a=Math.abs(x); const dd=(a>=1?d:Math.min(6, d+Math.ceil(-Math.log10(a+1e-12)))); return Number(x).toFixed(dd); }
+function median(a){ if(!a.length) return null; const s=[...a].sort((x,y)=>x-y); const n=s.length,m=Math.floor(n/2); return n%2?s[m]:(s[m-1]+s[m])/2; }
+function basicStats(a){ const n=a.length; if(!n) return {n:0,min:null,mean:null,median:null,max:null,sum:0}; let min=Infinity,max=-Infinity,sum=0; for(const v of a){ if(v<min) min=v; if(v>max) max=v; sum+=v; } return {n,min,mean:sum/n,median:median(a),max,sum}; }
+function csv(rows, sep=','){ return rows.map(r=>r.map(v=>{ if(v==null)return''; const s=String(v); return (s.includes('"')||s.includes(sep)||s.includes('\n'))?`"${s.replace(/"/g,'""')}"`:s; }).join(sep)).join('\n'); }
+function download(name, content, mime='text/plain'){ const blob=new Blob([content],{type:mime}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=name; a.click(); setTimeout(()=>URL.revokeObjectURL(a.href),1500); }
+function parseNumber(str, dec){ if (str==null) return NaN; if (typeof str==='number') return str; let s=String(str).trim(); if(!s) return NaN; if(dec===','){ s=s.replace(/\s/g,'').replace(/\./g,'').replace(',','.'); } else { s=s.replace(/,/g,''); } const v=Number(s); return isNaN(v)?NaN:v; }
+
+// ---------- CSV Parsing ----------
+async function readFileAsText(file){ return new Promise((res,rej)=>{ const r=new FileReader(); r.onerror=()=>rej(r.error); r.onload=()=>res(r.result); r.readAsText(file); }); }
+function detectSep(line){ const c=[',',';','\t','|']; let best=',',k=0; for(const ch of c){ const n=line.split(ch).length; if(n>k){k=n; best=ch;} } return best; }
+function splitCSV(line, sep){ const out=[]; let cur='',inQ=false; for(let i=0;i<line.length;i++){ const ch=line[i]; if(ch==='"'){ if(inQ && line[i+1]==='"'){ cur+='"'; i++; } else inQ=!inQ; } else if(ch===sep && !inQ){ out.push(cur); cur=''; } else cur+=ch; } out.push(cur); return out; }
+function parseDelimited(text, sepOpt='auto', decOpt='.'){
+  const lines=text.replace(/\r\n/g,'\n').replace(/\r/g,'\n').split('\n'); if(!lines.length) return {headers:[],rows:[],sep:sepOpt,dec:decOpt};
+  const sep=sepOpt==='auto'?detectSep(lines[0]):(sepOpt==='\\t'?'\t':sepOpt);
+  const headers=splitCSV(lines[0], sep); const rows=[];
+  for(let i=1;i<lines.length;i++){ const line=lines[i]; if(!line.trim()) continue; const cells=splitCSV(line, sep); rows.push(Object.fromEntries(headers.map((h,idx)=>[h, cells[idx]??'']))); }
+  return {headers,rows,sep,dec:decOpt};
+}
+
+// ---------- Géométrie ----------
+function vSub(a,b){ return [a[0]-b[0],a[1]-b[1],a[2]-b[2]]; }
+function vDot(a,b){ return a[0]*b[0]+a[1]*b[1]+a[2]*b[2]; }
+function vCross(a,b){ return [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]]; }
+function vLen(a){ return Math.hypot(a[0],a[1],a[2]); }
+function pointTriDist(p,a,b,c){
+  const ab=vSub(b,a), ac=vSub(c,a), ap=vSub(p,a);
+  const d1=vDot(ab,ap), d2=vDot(ac,ap);
+  if(d1<=0&&d2<=0) return vLen(ap);
+  const bp=vSub(p,b), d3=vDot(ab,bp), d4=vDot(ac,bp);
+  if(d3>=0&&d4<=d3) return vLen(bp);
+  const vc=d1*d4-d3*d2;
+  if(vc<=0&&d1>=0&&d3<=0){ const v=d1/(d1-d3); const proj=[a[0]+v*ab[0],a[1]+v*ab[1],a[2]+v*ab[2]]; return vLen(vSub(p,proj)); }
+  const cp=vSub(p,c), d5=vDot(ab,cp), d6=vDot(ac,cp);
+  if(d6>=0&&d5<=d6) return vLen(cp);
+  const vb=d5*d2-d1*d6;
+  if(vb<=0&&d2>=0&&d6<=0){ const w=d2/(d2-d6); const proj=[a[0]+w*ac[0],a[1]+w*ac[1],a[2]+w*ac[2]]; return vLen(vSub(p,proj)); }
+  const va=d3*d6-d5*d4;
+  if(va<=0 && (d4-d3)>=0 && (d5-d6)>=0){ const w=(d4-d3)/((d4-d3)+(d5-d6)); const edge=vSub(c,b); const proj=[b[0]+w*edge[0],b[1]+w*edge[1],b[2]+w*edge[2]]; return vLen(vSub(p,proj)); }
+  const n=vCross(ab,ac); return Math.abs(vDot(ap,n))/(vLen(n)||1);
+}
+function extent(pts){ if(!pts.length) return null; let minX=1/0,minY=1/0,minZ=1/0,maxX=-1/0,maxY=-1/0,maxZ=-1/0; for(const p of pts){ const[x,y,z]=p; if(x<minX) minX=x; if(y<minY) minY=y; if(z<minZ) minZ=z; if(x>maxX) maxX=x; if(y>maxY) maxY=y; if(z>maxZ) maxZ=z; } return {minX,minY,minZ,maxX,maxY,maxZ}; }
+function SpatialGrid(tris, cell=100){
+  const e=extent(tris.flat()); if(!e) return {query:()=>1/0};
+  const size=Math.max(1,cell); const idx=new Map();
+  const key=(i,j,k)=>`${i}|${j}|${k}`;
+  const ix=x=>Math.floor((x-e.minX)/size), iy=y=>Math.floor((y-e.minY)/size), iz=z=>Math.floor((z-e.minZ)/size);
+  for(const t of tris){
+    const xs=t.map(v=>v[0]), ys=t.map(v=>v[1]), zs=t.map(v=>v[2]);
+    for(let I=ix(Math.min(...xs)); I<=ix(Math.max(...xs)); I++)
+      for(let J=iy(Math.min(...ys)); J<=iy(Math.max(...ys)); J++)
+        for(let K=iz(Math.min(...zs)); K<=iz(Math.max(...zs)); K++){
+          const k=key(I,J,K); if(!idx.has(k)) idx.set(k,[]); idx.get(k).push(t);
+        }
+  }
+  function neighbors(p,r=1){
+    const I=ix(p[0]),J=iy(p[1]),K=iz(p[2]); const out=[];
+    for(let di=-r;di<=r;di++) for(let dj=-r;dj<=r;dj++) for(let dk=-r;dk<=r;dk++){
+      const k=key(I+di,J+dj,K+dk); if(idx.has(k)) out.push(...idx.get(k));
+    }
+    return out;
+  }
+  return { query(p){
+    let best=1/0;
+    for(let ring=1; ring<=3; ring++){
+      const cand=neighbors(p, ring);
+      if(!cand.length) continue;
+      for(const t of cand){ const d=pointTriDist(p,t[0],t[1],t[2]); if(d<best) best=d; }
+      if(isFinite(best)) return best;
+    }
+    for(const t of tris){ const d=pointTriDist(p,t[0],t[1],t[2]); if(d<best) best=d; }
+    return best;
+  }};
+}
+function planeStruct(tris){
+  if(!tris.length) return null; let nx=0,ny=0,nz=0;
+  for(const t of tris){ const a=t[0],b=t[1],c=t[2]; const n=vCross(vSub(b,a), vSub(c,a)); nx+=n[0]; ny+=n[1]; nz+=n[2]; }
+  const L=Math.hypot(nx,ny,nz)||1; nx/=L; ny/=L; nz/=L; if(nz<0){ nx=-nx; ny=-ny; nz=-nz; }
+  const dip=Math.acos(nz)*180/Math.PI; const azN=(Math.atan2(nx,ny)*180/Math.PI+360)%360; const strike=(azN+90)%360; const dipDir=(strike+90)%360;
+  return {nx,ny,nz,dip,strike,dipDir};
+}
+
+// ---------- Densification ----------
+function meanEdgeL(tris){ let sum=0,cnt=0; for(const t of tris){ sum+=vLen(vSub(t[1],t[0]))+vLen(vSub(t[2],t[1]))+vLen(vSub(t[0],t[2])); cnt+=3; } return cnt?sum/cnt:1/0; }
+function subdivTri(a,b,c,target){
+  const maxE=Math.max(vLen(vSub(b,a)), vLen(vSub(c,b)), vLen(vSub(a,c)));
+  const n=Math.max(1, Math.ceil(maxE/target)); const out=[];
+  for(let i=0;i<n;i++){
+    const t0=i/n, t1=(i+1)/n;
+    const A0=[a[0]*(1-t0)+c[0]*t0, a[1]*(1-t0)+c[1]*t0, a[2]*(1-t0)+c[2]*t0];
+    const A1=[a[0]*(1-t1)+c[0]*t1, a[1]*(1-t1)+c[1]*t1, a[2]*(1-t1)+c[2]*t1];
+    const B0=[b[0]*(1-t0)+c[0]*t0, b[1]*(1-t0)+c[1]*t0, b[2]*(1-t0)+c[2]*t0];
+    const B1=[b[0]*(1-t1)+c[0]*t1, b[1]*(1-t1)+c[1]*t1, b[2]*(1-t1)+c[2]*t1];
+    out.push([A0,B0,A1]); out.push([A1,B0,B1]);
+  }
+  return out;
+}
+function densify(tris, target){ const out=[]; for(const t of tris) out.push(...subdivTri(t[0],t[1],t[2],target)); return out; }
+
+// ---------- Distances / Intervalles ----------
+function computeDistances(){ if(!samples.length||!triangles.length) return; grid=grid||SpatialGrid(triangles,100); for(const s of samples){ s.Dist=Math.abs(grid.query([s.X,s.Y,s.Z])); } }
+function computeIntervals({cutoff,maxDist,dilution,agg}){
+  const by=new Map(); for(const s of samples){ if(!by.has(s.HoleID)) by.set(s.HoleID,[]); by.get(s.HoleID).push(s); }
+  const out=[];
+  for(const [hole,arr0] of by){
+    const arr=arr0.slice().sort((a,b)=>a.From-b.From);
+    const eligible=arr.map(s=>(s.Au>=cutoff) && (s.Dist==null || s.Dist<=maxDist));
+    let best=null;
+    for(let i=0;i<arr.length;i++){
+      let cum=0, ster=0, sumW=0, sumAuW=0, nS=0, sumAuS=0;
+      for(let j=i;j<arr.length;j++){
+        const s=arr[j]; cum += s.Length;
+        if(eligible[j]){ if(agg==='length-weighted'){ sumAuW += s.Au*s.Length; sumW += s.Length; } else { sumAuS += s.Au; nS++; } }
+        else { ster += s.Length; }
+        if(ster > dilution) break;
+        const ok = (agg==='length-weighted') ? (sumW>0) : (nS>0); if(!ok) continue;
+        const meanAu = (agg==='length-weighted') ? (sumAuW/sumW) : (sumAuS/nS);
+        const score = meanAu * cum;
+        if(!best || score>best.score) best={HoleID:hole, From:arr[i].From, To:arr[j].To, Length:cum, AuMean:meanAu, SterileLen:ster, score};
+      }
+    }
+    if(best) out.push(best);
+  }
+  return out;
+}
+
+// ---------- Stats / Previews / Results ----------
+function statsTableHTML(title, map){
+  let html=`<h3 style="margin:0 0 6px">${title}</h3><div class="scroll"><table><thead><tr>
+  <th>Variable</th><th>Minimum</th><th>Moyenne</th><th>Médiane</th><th>Maximum</th><th>Somme</th><th>Nombre</th>
+  </tr></thead><tbody>`;
+  for(const k of Object.keys(map)){ const s=map[k]; html+=`<tr><td>${k}</td><td>${fmt(s.min)}</td><td>${fmt(s.mean)}</td><td>${fmt(s.median)}</td><td>${fmt(s.max)}</td><td>${fmt(s.sum)}</td><td>${s.n||0}</td></tr>`; }
+  html+='</tbody></table></div>'; return html;
+}
+function updateStats(){
+  const au=samples.map(s=>s.Au).filter(Number.isFinite);
+  const ln=samples.map(s=>s.Length).filter(Number.isFinite);
+  const di=samples.map(s=>s.Dist).filter(Number.isFinite);
+  lastSampleStats={'Au (g/t)':basicStats(au),'Longueur (m)':basicStats(ln),'Distance au mesh (m)':basicStats(di)};
+  document.getElementById('stats-samples').innerHTML=statsTableHTML('Statistiques – Échantillons', lastSampleStats);
+
+  if(intervals.length){
+    lastIntervalStats={'AuMean (g/t)':basicStats(intervals.map(i=>i.AuMean)),'Longueur (m)':basicStats(intervals.map(i=>i.Length)),'Sterile Length (m)':basicStats(intervals.map(i=>i.SterileLen))};
+  } else {
+    lastIntervalStats={'AuMean (g/t)':{n:0,min:null,mean:null,median:null,max:null,sum:0},'Longueur (m)':{n:0,min:null,mean:null,median:null,max:null,sum:0},'Sterile Length (m)':{n:0,min:null,mean:null,median:null,max:null,sum:0}};
+  }
+  document.getElementById('stats-intervals').innerHTML=statsTableHTML('Statistiques – Intervalles', lastIntervalStats);
+
+  const ms=document.getElementById('mesh-struct');
+  if(meshS){ const {strike,dip,dipDir,nx,ny,nz}=meshS;
+    ms.innerHTML=`<table><tbody>
+      <tr><td>Strike (°)</td><td>${fmt(strike,1)}</td></tr>
+      <tr><td>Dip dir (°)</td><td>${fmt(dipDir,1)}</td></tr>
+      <tr><td>Pendage (°)</td><td>${fmt(dip,1)}</td></tr>
+      <tr><td>Normale</td><td>${fmt(nx,3)}, ${fmt(ny,3)}, ${fmt(nz,3)}</td></tr>
+    </tbody></table>`;
+  } else { ms.textContent='—'; }
+}
+function updatePreviews(){
+  const sEl=document.getElementById('preview-samples'); const iEl=document.getElementById('preview-intervals');
+  if(!samples.length) sEl.innerHTML='<em>Aucun échantillon.</em>'; else{
+    const cols=['HoleID','From','To','X','Y','Z','Au','Length','Dist']; let h='<table><thead><tr>'+cols.map(c=>`<th>${c}</th>`).join('')+'</tr></thead><tbody>';
+    const N=Math.min(150,samples.length); for(let i=0;i<N;i++){ const r=samples[i]; h+='<tr>'+cols.map(c=>`<td>${c==='HoleID'?r[c]:fmt(r[c])}</td>`).join('')+'</tr>'; } h+='</tbody></table>'; sEl.innerHTML=h;
+  }
+  if(!intervals.length) iEl.innerHTML='<em>Aucun intervalle.</em>'; else{
+    const cols=['HoleID','From','To','Length','AuMean','SterileLen']; let h='<table><thead><tr>'+cols.map(c=>`<th>${c}</th>`).join('')+'</tr></thead><tbody>';
+    const N=Math.min(150,intervals.length); for(let i=0;i<N;i++){ const r=intervals[i]; h+='<tr>'+cols.map(c=>`<td>${c==='HoleID'?r[c]:fmt(r[c])}</td>`).join('')+'</tr>'; } h+='</tbody></table>'; iEl.innerHTML=h;
+  }
+}
+function updateResults(){
+  const el=document.getElementById('results'); if(!intervals.length){ el.innerHTML='<em>Aucun intervalle.</em>'; return; }
+  const cols=['HoleID','From','To','Length','AuMean','SterileLen']; let h='<div class="scroll"><table><thead><tr>'+cols.map(c=>`<th>${c}</th>`).join('')+'</tr></thead><tbody>';
+  const rows=intervals.slice().sort((a,b)=>a.HoleID.localeCompare(b.HoleID));
+  for(const r of rows){ h+='<tr>'+cols.map(c=>`<td>${c==='HoleID'?r[c]:fmt(r[c])}</td>`).join('')+'</tr>'; } h+='</tbody></table></div>'; el.innerHTML=h;
+}
+function refreshAll(){ computeDistances(); meshS=triangles.length?planeStruct(triangles):null; updateStats(); updatePreviews(); updateResults(); render(); }
+
+// ---------- DXF ----------
+function parseDXF(text){
+  const lines=text.replace(/\r\n/g,'\n').replace(/\r/g,'\n').split('\n');
+  const tris=[]; let i=0;
+  while(i<lines.length-1){
+    const code=lines[i].trim(); const value=(lines[i+1]||'').trim();
+    if(code==='0' && value.toUpperCase()==='3DFACE'){
+      let vx=[],vy=[],vz=[]; let j=i+2;
+      while(j<lines.length){
+        const c=lines[j].trim(); const v=(lines[j+1]||'').trim();
+        if(c==='0') break;
+        if(c==='10') vx[0]=parseFloat(v); if(c==='20') vy[0]=parseFloat(v); if(c==='30') vz[0]=parseFloat(v);
+        if(c==='11') vx[1]=parseFloat(v); if(c==='21') vy[1]=parseFloat(v); if(c==='31') vz[1]=parseFloat(v);
+        if(c==='12') vx[2]=parseFloat(v); if(c==='22') vy[2]=parseFloat(v); if(c==='32') vz[2]=parseFloat(v);
+        if(c==='13') vx[3]=parseFloat(v); if(c==='23') vy[3]=parseFloat(v); if(c==='33') vz[3]=parseFloat(v);
+        j+=2;
+      }
+      const v1=[vx[0],vy[0],vz[0]], v2=[vx[1],vy[1],vz[1]], v3=[vx[2],vy[2],vz[2]];
+      if(isFinite(v1[0])&&isFinite(v2[0])&&isFinite(v3[0])) tris.push([v1,v2,v3]);
+      i=j; continue;
+    }
+    i+=2;
+  }
+  return {triangles:tris};
+}
+
+// ---------- Demo mesh ----------
+function demoMesh(){
+  const tris=[]; const nx=60, ny=60, spacing=100;
+  const zf=(x,y)=>-25 + 2.0*Math.sin(x*0.0015) + 2.0*Math.cos(y*0.0015);
+  for(let i=0;i<nx;i++){
+    for(let j=0;j<ny;j++){
+      const x0=(i-nx/2)*spacing, x1=(i+1-nx/2)*spacing;
+      const y0=(j-ny/2)*spacing, y1=(j+1-ny/2)*spacing;
+      const z00=zf(x0,y0), z01=zf(x0,y1), z10=zf(x1,y0), z11=zf(x1,y1);
+      const v00=[x0,y0,z00], v01=[x0,y1,z01], v10=[x1,y0,z10], v11=[x1,y1,z11];
+      tris.push([v00,v10,v11]); tris.push([v00,v11,v01]);
+    }
+  }
+  return tris;
+}
+
+// ---------- Canvas 3D ----------
+let camera={cx:0,cy:0,cz:-25, rx:0.6, ry:0.9, dist:1400, fov:900, panX:0, panY:0};
+function extentAll(){ const pts=[]; for(const s of samples) pts.push([s.X,s.Y,s.Z]); for(const t of triangles){ pts.push(t[0],t[1],t[2]); } return extent(pts); }
+function fitView(){
+  const e=extentAll(); if(!e) return;
+  camera.cx=(e.minX+e.maxX)/2; camera.cy=(e.minY+e.maxY)/2; camera.cz=(e.minZ+e.maxZ)/2;
+  const span=Math.max(e.maxX-e.minX, e.maxY-e.minY, e.maxZ-e.minZ);
+  camera.dist=Math.max(900, span*1.15); camera.panX=0; camera.panY=0;
+  render();
+}
+function worldToCam(p){
+  const [x,y,z]=p; const dx=x-camera.cx, dy=y-camera.cy, dz=z-camera.cz;
+  const cosy=Math.cos(camera.ry), siny=Math.sin(camera.ry), cosx=Math.cos(camera.rx), sinx=Math.sin(camera.rx);
+  let x1 = cosy*dx + siny*dz; let z1 = -siny*dx + cosy*dz; let y1 = cosx*dy - sinx*z1; let z2 = sinx*dy + cosx*z1 + camera.dist;
+  return [x1,y1,z2];
+}
+function project(p){ const [x,y,z]=p; if(!isFinite(z)||z<=1) return [NaN,NaN,NaN]; const s=camera.fov/z; return [canvas.width/2 + camera.panX + x*s, canvas.height/2 + camera.panY - y*s, z]; }
+function hashCode(str){ let h=0; for(let i=0;i<str.length;i++) h=(h<<5)-h+str.charCodeAt(i)|0; return h; }
+function colorForSample(s){
+  const mode=document.getElementById('color-mode').value;
+  if(mode==='none') return '#93c5fd';
+  if(mode==='status'){ const h=Math.abs(hashCode(s.Status||'OK'))%360; return `hsl(${h} 70% 60%)`; }
+  if(mode==='dist'){ const d=isFinite(s.Dist)?s.Dist:999; const t=Math.max(0,Math.min(1,d/30)); return `hsl(${t*220} 80% ${50+20*t}%)`; }
+  const a=Math.max(0.1, Math.min(50, s.Au));
+  const t=Math.log10(a/0.1)/Math.log10(50/0.1); const h=30-30*t, l=45+20*t;
+  return `hsl(${h} 90% ${l}%)`;
+}
+function drawGrid(){
+  const step=100, half=1600; ctx.strokeStyle=getComputedStyle(document.documentElement).getPropertyValue('--grid')||'#173154'; ctx.lineWidth=1;
+  for(let x=-half;x<=half;x+=step){ const p0=project(worldToCam([x,-half,-25])); const p1=project(worldToCam([x,half,-25])); if(!isFinite(p0[0])||!isFinite(p1[0])) continue; ctx.beginPath(); ctx.moveTo(p0[0],p0[1]); ctx.lineTo(p1[0],p1[1]); ctx.stroke(); }
+  for(let y=-half;y<=half;y+=step){ const p0=project(worldToCam([-half,y,-25])); const p1=project(worldToCam([half,y,-25])); if(!isFinite(p0[0])||!isFinite(p1[0])) continue; ctx.beginPath(); ctx.moveTo(p0[0],p0[1]); ctx.lineTo(p1[0],p1[1]); ctx.stroke(); }
+}
+function drawAxes(){
+  function axis(o,d,c,l){ const p0=project(worldToCam(o)), p1=project(worldToCam([o[0]+d[0],o[1]+d[1],o[2]+d[2]])); if(!isFinite(p0[0])||!isFinite(p1[0])) return;
+    ctx.strokeStyle=c; ctx.lineWidth=2; ctx.beginPath(); ctx.moveTo(p0[0],p0[1]); ctx.lineTo(p1[0],p1[1]); ctx.stroke(); ctx.fillStyle=c; ctx.font="12px sans-serif"; ctx.fillText(l,p1[0]+6,p1[1]+6); }
+  axis([-1600,-1600,-25],[250,0,0],getComputedStyle(document.documentElement).getPropertyValue('--axis-x')||'#60a5fa','X');
+  axis([-1600,-1600,-25],[0,250,0],getComputedStyle(document.documentElement).getPropertyValue('--axis-y')||'#34d399','Y');
+  axis([-1600,-1600,-25],[0,0,250],getComputedStyle(document.documentElement).getPropertyValue('--axis-z')||'#f97316','Z');
+}
+function render(){
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  ctx.fillStyle='#040a1a'; ctx.fillRect(0,0,canvas.width,canvas.height);
+  drawGrid(); drawAxes();
+  if(triangles.length){
+    ctx.strokeStyle='rgba(192,132,252,.85)'; ctx.lineWidth=1;
+    for(const t of triangles){
+      const p0=project(worldToCam(t[0])), p1=project(worldToCam(t[1])), p2=project(worldToCam(t[2]));
+      if(!isFinite(p0[0])||!isFinite(p1[0])||!isFinite(p2[0])) continue;
+      ctx.beginPath(); ctx.moveTo(p0[0],p0[1]); ctx.lineTo(p1[0],p1[1]); ctx.lineTo(p2[0],p2[1]); ctx.closePath(); ctx.stroke();
+    }
+  }
+  for(const s of samples){
+    const p=project(worldToCam([s.X,s.Y,s.Z])); if(!isFinite(p[0])) continue;
+    const r=Math.max(1.5, Math.min(4, 1 + 0.4*s.Length));
+    ctx.fillStyle=colorForSample(s); ctx.beginPath(); ctx.arc(p[0],p[1],r,0,Math.PI*2); ctx.fill();
+  }
+}
+
+// ---------- Handlers UI ----------
+let dragging=false, rotating=false, lx=0,ly=0;
+canvas.addEventListener('mousedown',e=>{dragging=true; rotating=e.shiftKey; lx=e.clientX; ly=e.clientY;});
+addEventListener('mouseup',()=>dragging=false);
+addEventListener('mousemove',e=>{ if(!dragging) return; const dx=e.clientX-lx, dy=e.clientY-ly; lx=e.clientX; ly=e.clientY;
+  if(rotating){ camera.ry+=dx*0.005; camera.rx+=dy*0.005; } else { camera.panX+=dx; camera.panY+=dy; } render(); });
+canvas.addEventListener('wheel',e=>{ e.preventDefault(); camera.dist *= (1 + e.deltaY*0.001); render(); }, {passive:false});
+
+document.getElementById('btn-capture').addEventListener('click',()=> download(`neocanvas_${meshName}.png`, canvas.toDataURL('image/png')));
+document.getElementById('btn-fit').addEventListener('click', fitView);
+document.getElementById('btn-reset').addEventListener('click', ()=>{
+  samples=[]; intervals=[]; triangles=[]; grid=null; meshS=null; lastSampleStats=null; lastIntervalStats=null; meshName='mesh_demo';
+  document.getElementById('results').innerHTML=''; document.getElementById('preview-samples').innerHTML=''; document.getElementById('preview-intervals').innerHTML='';
+  document.getElementById('stats-samples').textContent='-'; document.getElementById('stats-intervals').textContent='-'; document.getElementById('mesh-struct').textContent='-';
+  render(); log('Réinitialisé.');
+});
+
+// ---------- Echantillons démo ----------
+function randomNormal(mu=0,s=1){ let u=0,v=0; while(u===0)u=Math.random(); while(v===0)v=Math.random(); return mu+s*Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v); }
+function ensureMesh(){ if(!triangles.length){ triangles=demoMesh(); grid=SpatialGrid(triangles,100); meshS=planeStruct(triangles); meshName='mesh_demo'; } }
+document.getElementById('btn-generate-demo').addEventListener('click', ()=>{
+  ensureMesh();
+  const holes=[], N=10, spacing=200, off=(N-1)*spacing/2; let id=0;
+  for(let gy=0;gy<N;gy++) for(let gx=0;gx<N;gx++) holes.push({id:`DDH_${String(id++).padStart(3,'0')}`, x:gx*spacing-off, y:gy*spacing-off, z:0});
+  const out=[];
+  for(const h of holes){
+    let depth=0, target=60+randomNormal(0,5);
+    while(depth<target){
+      const L=Math.random()<0.5?1:2; const from=depth, to=depth+L, mid=0.5*(from+to);
+      const x=h.x, y=h.y, z=h.z - mid; const dist=grid?Math.abs(grid.query([x,y,z])):999;
+      const background=Math.exp(randomNormal(Math.log(0.15),0.45));
+      let halo=0; if(dist<10) halo=1.0+Math.exp(randomNormal(Math.log(0.7),0.4)); else if(dist<30){ const t=(30-dist)/20; halo=t*Math.exp(randomNormal(Math.log(0.6),0.5)); }
+      const Au=Math.max(0.1, Math.min(50, background+halo));
+      out.push({HoleID:h.id, From:from, To:to, X:x, Y:y, Z:z, Au, Length:L, Status:'OK', Dist:dist});
+      depth=to;
+    }
+  }
+  samples=out; refreshAll(); fitView(); log(`Démo: ${samples.length} échantillons, ${triangles.length} triangles (mesh: ${meshName}).`);
+});
+
+// ---------- Import/Export DXF ----------
+document.getElementById('file-dxf').addEventListener('change', async (e)=>{
+  const f=e.target.files[0]; if(!f) return;
+  const text=await readFileAsText(f);
+  const d=parseDXF(text);
+  triangles=d.triangles; grid=SpatialGrid(triangles,100); meshS=planeStruct(triangles);
+  meshName = (f.name || 'mesh').replace(/\.dxf$/i,'').replace(/\s+/g,'_');
+  refreshAll(); fitView(); log(`DXF: ${triangles.length} triangles (mesh: ${meshName}).`);
+});
+document.getElementById('btn-export-mesh').addEventListener('click', ()=>{
+  if(!triangles.length) return alert('Aucun mesh');
+  let dxf='0\nSECTION\n2\nENTITIES\n';
+  for(const t of triangles){
+    dxf+='0\n3DFACE\n8\n0\n';
+    dxf+=`10\n${fmt(t[0][0])}\n20\n${fmt(t[0][1])}\n30\n${fmt(t[0][2])}\n`;
+    dxf+=`11\n${fmt(t[1][0])}\n21\n${fmt(t[1][1])}\n31\n${fmt(t[1][2])}\n`;
+    dxf+=`12\n${fmt(t[2][0])}\n22\n${fmt(t[2][1])}\n32\n${fmt(t[2][2])}\n`;
+    dxf+=`13\n${fmt(t[2][0])}\n23\n${fmt(t[2][1])}\n33\n${fmt(t[2][2])}\n`;
+  }
+  dxf+='0\nENDSEC\n0\nEOF\n';
+  download(`${meshName||'mesh'}.dxf`, dxf, 'application/dxf');
+});
+
+// ---------- Densité / Densifier ----------
+document.getElementById('btn-check-density').addEventListener('click', ()=>{
+  if(!triangles.length) return alert('Aucun mesh');
+  const L=meanEdgeL(triangles), thr=parseFloat(document.getElementById('densify-threshold').value);
+  alert(L>thr ? 'Mesh peu dense' : 'Mesh ok');
+});
+document.getElementById('btn-densify').addEventListener('click', ()=>{
+  if(!triangles.length) return alert('Aucun mesh');
+  const target=parseFloat(document.getElementById('densify-target').value);
+  const before=triangles.length; triangles=densify(triangles, target); const after=triangles.length;
+  grid=SpatialGrid(triangles, Math.max(50,target*4)); meshS=planeStruct(triangles);
+  // suffixe de version du mesh
+  meshName = `${meshName}_dens${String(target).replace(/\./g,'_')}`;
+  refreshAll(); fitView(); log(`Densifié: ${before} -> ${after} triangles (mesh: ${meshName}).`);
+});
+
+// ---------- Import/mapping échantillons ----------
+const sel={holeid:'col-holeid',from:'col-from',to:'col-to',x:'col-x',y:'col-y',z:'col-z',au:'col-au',length:'col-length'};
+const mapEls=Object.fromEntries(Object.entries(sel).map(([k,id])=>[k,document.getElementById(id)]));
+let mapping={holeid:'HoleID',from:'From',to:'To',x:'X',y:'Y',z:'Z',au:'Au',length:'Length'};
+function populateMapping(headers){
+  for(const k in mapEls){
+    const el=mapEls[k]; el.innerHTML='';
+    for(const h of headers){ const opt=document.createElement('option'); opt.value=h; opt.textContent=h; el.appendChild(opt); }
+    const pref = Object.values(mapping).find(v=>v.toLowerCase()===k.toLowerCase())||k;
+    el.value = headers.includes(pref) ? pref : headers[0] || '';
+  }
+}
+document.getElementById('sep').addEventListener('change', e=> sepChoice=e.target.value);
+document.getElementById('dec').addEventListener('change', e=> decChoice=e.target.value);
+document.getElementById('file-samples').addEventListener('change', async (e)=>{
+  const f=e.target.files[0]; if(!f) return; const text=await readFileAsText(f);
+  const parsed=parseDelimited(text, sepChoice, decChoice);
+  sampleRaw=parsed.rows; populateMapping(parsed.headers);
+  log(`Échantillons importés (bruts): ${sampleRaw.length}`);
+});
+document.getElementById('btn-apply-mapping').addEventListener('click', ()=>{
+  const m={}; for(const k in mapEls) m[k]=mapEls[k].value;
+  const out=[];
+  for(const r of sampleRaw){
+    const o={
+      HoleID:String(r[m.holeid]).trim(),
+      From:parseNumber(r[m.from], decChoice),
+      To:parseNumber(r[m.to], decChoice),
+      X:parseNumber(r[m.x], decChoice),
+      Y:parseNumber(r[m.y], decChoice),
+      Z:parseNumber(r[m.z], decChoice),
+      Au:parseNumber(r[m.au], decChoice),
+      Length:parseNumber(r[m.length], decChoice),
+      Status:'OK'
+    };
+    if(!isFinite(o.Length)||o.Length<=0) o.Length = o.To - o.From;
+    if([o.From,o.To,o.X,o.Y,o.Z,o.Au,o.Length].every(v=>isFinite(v))) out.push(o);
+  }
+  samples=out; refreshAll(); fitView(); log(`Mapping appliqué: ${samples.length} échantillons valides.`);
+});
+
+// ---------- Export CSV ----------
+document.getElementById('btn-export-intervals').addEventListener('click', ()=>{
+  if(!intervals.length) return alert('Aucun intervalle.');
+  const rows=[['HoleID','From','To','Length','AuMean','SterileLen']];
+  for(const r of intervals) rows.push([r.HoleID,fmt(r.From),fmt(r.To),fmt(r.Length),fmt(r.AuMean),fmt(r.SterileLen)]);
+  download(`intervalles_${meshName||'mesh'}.csv`, csv(rows, ','), 'text/csv');
+});
+document.getElementById('btn-export-demo').addEventListener('click', ()=>{
+  if(!samples.length) return alert('Aucune donnée.');
+  const rows=[['HoleID','From','To','X','Y','Z','Au','Length','Dist']]; for(const s of samples)
+    rows.push([s.HoleID,fmt(s.From),fmt(s.To),fmt(s.X),fmt(s.Y),fmt(s.Z),fmt(s.Au),fmt(s.Length),fmt(s.Dist)]);
+  download(`echantillons_${meshName||'mesh'}.csv`, csv(rows, ','), 'text/csv');
+});
+document.getElementById('btn-export-stats-samples').addEventListener('click', ()=>{
+  if(!lastSampleStats) return alert('Aucune statistique');
+  const rows=[['Variable','Minimum','Moyenne','Médiane','Maximum','Somme','Nombre']];
+  for(const k of Object.keys(lastSampleStats)){ const s=lastSampleStats[k]; rows.push([k,fmt(s.min),fmt(s.mean),fmt(s.median),fmt(s.max),fmt(s.sum),s.n||0]); }
+  download(`stats_echantillons_${meshName||'mesh'}.csv`, csv(rows, ','), 'text/csv');
+});
+document.getElementById('btn-export-stats-intervals').addEventListener('click', ()=>{
+  if(!lastIntervalStats) return alert('Aucune statistique');
+  const rows=[['Variable','Minimum','Moyenne','Médiane','Maximum','Somme','Nombre']];
+  for(const k of Object.keys(lastIntervalStats)){ const s=lastIntervalStats[k]; rows.push([k,fmt(s.min),fmt(s.mean),fmt(s.median),fmt(s.max),fmt(s.sum),s.n||0]); }
+  download(`stats_intervalles_${meshName||'mesh'}.csv`, csv(rows, ','), 'text/csv');
+});
+
+// ---------- Paramètres / Calcul intervalles ----------
+document.getElementById('btn-run').addEventListener('click', ()=>{
+  if(!samples.length) return alert('Générez la démo ou importez des échantillons.');
+  const params={cutoff:parseFloat(document.getElementById('cutoff').value), maxDist:parseFloat(document.getElementById('max-dist').value), dilution:parseFloat(document.getElementById('dilution').value), agg:document.getElementById('agg').value};
+  intervals = computeIntervals(params); updateStats(); updatePreviews(); updateResults(); render(); log(`Intervalles: ${intervals.length} (mesh: ${meshName}).`);
+});
+
+// ---------- Start ----------
+render();
+</script>
+</body>
+</html>

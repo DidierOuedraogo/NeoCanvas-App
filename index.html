@@ -181,10 +181,17 @@
 <footer>© 2025 • Didier Ouedraogo, P.Geo. • NeoCanvas Au</footer>
 
 <script>
+// ---------- Etat global ----------
+let samples=[], intervals=[], triangles=[], grid=null, meshS=null;
+let sampleRaw=[]; let sepChoice='auto', decChoice='.';
+let lastSampleStats=null, lastIntervalStats=null;
+let meshName = 'mesh_demo'; // nom du mesh utilisé pour suffixer les exports
+
+// ---------- DOM ----------
 const logEl = document.getElementById('log');
 const canvas = document.getElementById('view'); const ctx = canvas.getContext('2d');
 
-// Utils
+// ---------- Utils ----------
 function log(m){ const t=new Date().toLocaleTimeString(); logEl.textContent = `[${t}] ${m}\n` + logEl.textContent; }
 function fmt(x,d=2){ if (x==null||!isFinite(x)) return ''; const a=Math.abs(x); const dd=(a>=1?d:Math.min(6, d+Math.ceil(-Math.log10(a+1e-12)))); return Number(x).toFixed(dd); }
 function median(a){ if(!a.length) return null; const s=[...a].sort((x,y)=>x-y); const n=s.length,m=Math.floor(n/2); return n%2?s[m]:(s[m-1]+s[m])/2; }
@@ -193,7 +200,19 @@ function csv(rows, sep=','){ return rows.map(r=>r.map(v=>{ if(v==null)return''; 
 function download(name, content, mime='text/plain'){ const blob=new Blob([content],{type:mime}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=name; a.click(); setTimeout(()=>URL.revokeObjectURL(a.href),1500); }
 function parseNumber(str, dec){ if (str==null) return NaN; if (typeof str==='number') return str; let s=String(str).trim(); if(!s) return NaN; if(dec===','){ s=s.replace(/\s/g,'').replace(/\./g,'').replace(',','.'); } else { s=s.replace(/,/g,''); } const v=Number(s); return isNaN(v)?NaN:v; }
 
-// Geometry
+// ---------- CSV Parsing ----------
+async function readFileAsText(file){ return new Promise((res,rej)=>{ const r=new FileReader(); r.onerror=()=>rej(r.error); r.onload=()=>res(r.result); r.readAsText(file); }); }
+function detectSep(line){ const c=[',',';','\t','|']; let best=',',k=0; for(const ch of c){ const n=line.split(ch).length; if(n>k){k=n; best=ch;} } return best; }
+function splitCSV(line, sep){ const out=[]; let cur='',inQ=false; for(let i=0;i<line.length;i++){ const ch=line[i]; if(ch==='"'){ if(inQ && line[i+1]==='"'){ cur+='"'; i++; } else inQ=!inQ; } else if(ch===sep && !inQ){ out.push(cur); cur=''; } else cur+=ch; } out.push(cur); return out; }
+function parseDelimited(text, sepOpt='auto', decOpt='.'){
+  const lines=text.replace(/\r\n/g,'\n').replace(/\r/g,'\n').split('\n'); if(!lines.length) return {headers:[],rows:[],sep:sepOpt,dec:decOpt};
+  const sep=sepOpt==='auto'?detectSep(lines[0]):(sepOpt==='\\t'?'\t':sepOpt);
+  const headers=splitCSV(lines[0], sep); const rows=[];
+  for(let i=1;i<lines.length;i++){ const line=lines[i]; if(!line.trim()) continue; const cells=splitCSV(line, sep); rows.push(Object.fromEntries(headers.map((h,idx)=>[h, cells[idx]??'']))); }
+  return {headers,rows,sep,dec:decOpt};
+}
+
+// ---------- Géométrie ----------
 function vSub(a,b){ return [a[0]-b[0],a[1]-b[1],a[2]-b[2]]; }
 function vDot(a,b){ return a[0]*b[0]+a[1]*b[1]+a[2]*b[2]; }
 function vCross(a,b){ return [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]]; }
@@ -214,7 +233,7 @@ function pointTriDist(p,a,b,c){
   if(va<=0 && (d4-d3)>=0 && (d5-d6)>=0){ const w=(d4-d3)/((d4-d3)+(d5-d6)); const edge=vSub(c,b); const proj=[b[0]+w*edge[0],b[1]+w*edge[1],b[2]+w*edge[2]]; return vLen(vSub(p,proj)); }
   const n=vCross(ab,ac); return Math.abs(vDot(ap,n))/(vLen(n)||1);
 }
-function extent(pts){ if(!pts.length) return null; let minX=1/0,minY=1/0,minZ=1/0,maxX=-1/0,maxY=-1/0,maxZ=-1/0; for(const p of pts){ const[x,y,z]=p; if(x<minX)minX=x; if(y<minY)minY=y; if(z<minZ)minZ=z; if(x>maxX)maxX=x; if(y>maxY)maxY=y; if(z>maxZ)maxZ=z; } return {minX,minY,minZ,maxX,maxY,maxZ}; }
+function extent(pts){ if(!pts.length) return null; let minX=1/0,minY=1/0,minZ=1/0,maxX=-1/0,maxY=-1/0,maxZ=-1/0; for(const p of pts){ const[x,y,z]=p; if(x<minX) minX=x; if(y<minY) minY=y; if(z<minZ) minZ=z; if(x>maxX) maxX=x; if(y>maxY) maxY=y; if(z>maxZ) maxZ=z; } return {minX,minY,minZ,maxX,maxY,maxZ}; }
 function SpatialGrid(tris, cell=100){
   const e=extent(tris.flat()); if(!e) return {query:()=>1/0};
   const size=Math.max(1,cell); const idx=new Map();
@@ -255,7 +274,7 @@ function planeStruct(tris){
   return {nx,ny,nz,dip,strike,dipDir};
 }
 
-// Densification
+// ---------- Densification ----------
 function meanEdgeL(tris){ let sum=0,cnt=0; for(const t of tris){ sum+=vLen(vSub(t[1],t[0]))+vLen(vSub(t[2],t[1]))+vLen(vSub(t[0],t[2])); cnt+=3; } return cnt?sum/cnt:1/0; }
 function subdivTri(a,b,c,target){
   const maxE=Math.max(vLen(vSub(b,a)), vLen(vSub(c,b)), vLen(vSub(a,c)));
@@ -272,83 +291,8 @@ function subdivTri(a,b,c,target){
 }
 function densify(tris, target){ const out=[]; for(const t of tris) out.push(...subdivTri(t[0],t[1],t[2],target)); return out; }
 
-// State
-let samples=[], triangles=[], grid=null, meshS=null, intervals=[];
-let lastSampleStats=null, lastIntervalStats=null;
-let sepChoice='auto', decChoice='.';
-let sampleRaw=[];
-
-// Mapping UI
-const sel={holeid:'col-holeid',from:'col-from',to:'col-to',x:'col-x',y:'col-y',z:'col-z',au:'col-au',length:'col-length'};
-const mapEls=Object.fromEntries(Object.entries(sel).map(([k,id])=>[k,document.getElementById(id)]));
-let mapping={holeid:'HoleID',from:'From',to:'To',x:'X',y:'Y',z:'Z',au:'Au',length:'Length'};
-function populateMapping(headers){
-  for(const k in mapEls){
-    const el=mapEls[k]; el.innerHTML='';
-    for(const h of headers){ const opt=document.createElement('option'); opt.value=h; opt.textContent=h; el.appendChild(opt); }
-    const pref = Object.values(mapping).find(v=>v.toLowerCase()===k.toLowerCase())||k;
-    el.value = headers.includes(pref) ? pref : headers[0] || '';
-  }
-}
-
-// CSV parsing
-async function readFileAsText(file){ return new Promise((res,rej)=>{ const r=new FileReader(); r.onerror=()=>rej(r.error); r.onload=()=>res(r.result); r.readAsText(file); }); }
-function detectSep(line){ const c=[',',';','\t','|']; let best=',',k=0; for(const ch of c){ const n=line.split(ch).length; if(n>k){k=n; best=ch;} } return best; }
-function splitCSV(line, sep){ const out=[]; let cur='',inQ=false; for(let i=0;i<line.length;i++){ const ch=line[i]; if(ch==='"'){ if(inQ && line[i+1]==='"'){ cur+='"'; i++; } else inQ=!inQ; } else if(ch===sep && !inQ){ out.push(cur); cur=''; } else cur+=ch; } out.push(cur); return out; }
-function parseDelimited(text, sepOpt='auto', decOpt='.'){
-  const lines=text.replace(/\r\n/g,'\n').replace(/\r/g,'\n').split('\n'); if(!lines.length) return {headers:[],rows:[],sep:sepOpt,dec:decOpt};
-  const sep=sepOpt==='auto'?detectSep(lines[0]):(sepOpt==='\\t'?'\t':sepOpt);
-  const headers=splitCSV(lines[0], sep); const rows=[];
-  for(let i=1;i<lines.length;i++){ const line=lines[i]; if(!line.trim()) continue; const cells=splitCSV(line, sep); rows.push(Object.fromEntries(headers.map((h,idx)=>[h, cells[idx]??'']))); }
-  return {headers,rows,sep,dec:decOpt};
-}
-
-// DXF
-function parseDXF(text){
-  const lines=text.replace(/\r\n/g,'\n').replace(/\r/g,'\n').split('\n');
-  const tris=[]; let i=0;
-  while(i<lines.length-1){
-    const code=lines[i].trim(); const value=(lines[i+1]||'').trim();
-    if(code==='0' && value.toUpperCase()==='3DFACE'){
-      let vx=[],vy=[],vz=[]; let j=i+2;
-      while(j<lines.length){
-        const c=lines[j].trim(); const v=(lines[j+1]||'').trim();
-        if(c==='0') break;
-        if(c==='10') vx[0]=parseFloat(v); if(c==='20') vy[0]=parseFloat(v); if(c==='30') vz[0]=parseFloat(v);
-        if(c==='11') vx[1]=parseFloat(v); if(c==='21') vy[1]=parseFloat(v); if(c==='31') vz[1]=parseFloat(v);
-        if(c==='12') vx[2]=parseFloat(v); if(c==='22') vy[2]=parseFloat(v); if(c==='32') vz[2]=parseFloat(v);
-        if(c==='13') vx[3]=parseFloat(v); if(c==='23') vy[3]=parseFloat(v); if(c==='33') vz[3]=parseFloat(v);
-        j+=2;
-      }
-      const v1=[vx[0],vy[0],vz[0]], v2=[vx[1],vy[1],vz[1]], v3=[vx[2],vy[2],vz[2]];
-      if(isFinite(v1[0])&&isFinite(v2[0])&&isFinite(v3[0])) tris.push([v1,v2,v3]);
-      i=j; continue;
-    }
-    i+=2;
-  }
-  return {triangles:tris};
-}
-
-// Demo mesh (corrigé)
-function demoMesh(){
-  const tris=[]; const nx=60, ny=60, spacing=100;
-  const zf=(x,y)=>-25 + 2.0*Math.sin(x*0.0015) + 2.0*Math.cos(y*0.0015);
-  for(let i=0;i<nx;i++){
-    for(let j=0;j<ny;j++){
-      const x0=(i-nx/2)*spacing, x1=(i+1-nx/2)*spacing;
-      const y0=(j-ny/2)*spacing, y1=(j+1-ny/2)*spacing; // correct ny
-      const z00=zf(x0,y0), z01=zf(x0,y1), z10=zf(x1,y0), z11=zf(x1,y1);
-      const v00=[x0,y0,z00], v01=[x0,y1,z01], v10=[x1,y0,z10], v11=[x1,y1,z11];
-      tris.push([v00,v10,v11]); tris.push([v00,v11,v01]);
-    }
-  }
-  return tris;
-}
-
-// Distances
+// ---------- Distances / Intervalles ----------
 function computeDistances(){ if(!samples.length||!triangles.length) return; grid=grid||SpatialGrid(triangles,100); for(const s of samples){ s.Dist=Math.abs(grid.query([s.X,s.Y,s.Z])); } }
-
-// Intervals (strict sterile)
 function computeIntervals({cutoff,maxDist,dilution,agg}){
   const by=new Map(); for(const s of samples){ if(!by.has(s.HoleID)) by.set(s.HoleID,[]); by.get(s.HoleID).push(s); }
   const out=[];
@@ -374,12 +318,102 @@ function computeIntervals({cutoff,maxDist,dilution,agg}){
   return out;
 }
 
-// Rendering
-let camera={cx:0,cy:0,cz:-25, rx:0.6, ry:0.9, dist:1400, fov:900, panX:0, panY:0};
-function extentAll(){
-  const pts=[]; for(const s of samples) pts.push([s.X,s.Y,s.Z]); for(const t of triangles){ pts.push(t[0],t[1],t[2]); }
-  return extent(pts);
+// ---------- Stats / Previews / Results ----------
+function statsTableHTML(title, map){
+  let html=`<h3 style="margin:0 0 6px">${title}</h3><div class="scroll"><table><thead><tr>
+  <th>Variable</th><th>Minimum</th><th>Moyenne</th><th>Médiane</th><th>Maximum</th><th>Somme</th><th>Nombre</th>
+  </tr></thead><tbody>`;
+  for(const k of Object.keys(map)){ const s=map[k]; html+=`<tr><td>${k}</td><td>${fmt(s.min)}</td><td>${fmt(s.mean)}</td><td>${fmt(s.median)}</td><td>${fmt(s.max)}</td><td>${fmt(s.sum)}</td><td>${s.n||0}</td></tr>`; }
+  html+='</tbody></table></div>'; return html;
 }
+function updateStats(){
+  const au=samples.map(s=>s.Au).filter(Number.isFinite);
+  const ln=samples.map(s=>s.Length).filter(Number.isFinite);
+  const di=samples.map(s=>s.Dist).filter(Number.isFinite);
+  lastSampleStats={'Au (g/t)':basicStats(au),'Longueur (m)':basicStats(ln),'Distance au mesh (m)':basicStats(di)};
+  document.getElementById('stats-samples').innerHTML=statsTableHTML('Statistiques – Échantillons', lastSampleStats);
+
+  if(intervals.length){
+    lastIntervalStats={'AuMean (g/t)':basicStats(intervals.map(i=>i.AuMean)),'Longueur (m)':basicStats(intervals.map(i=>i.Length)),'Sterile Length (m)':basicStats(intervals.map(i=>i.SterileLen))};
+  } else {
+    lastIntervalStats={'AuMean (g/t)':{n:0,min:null,mean:null,median:null,max:null,sum:0},'Longueur (m)':{n:0,min:null,mean:null,median:null,max:null,sum:0},'Sterile Length (m)':{n:0,min:null,mean:null,median:null,max:null,sum:0}};
+  }
+  document.getElementById('stats-intervals').innerHTML=statsTableHTML('Statistiques – Intervalles', lastIntervalStats);
+
+  const ms=document.getElementById('mesh-struct');
+  if(meshS){ const {strike,dip,dipDir,nx,ny,nz}=meshS;
+    ms.innerHTML=`<table><tbody>
+      <tr><td>Strike (°)</td><td>${fmt(strike,1)}</td></tr>
+      <tr><td>Dip dir (°)</td><td>${fmt(dipDir,1)}</td></tr>
+      <tr><td>Pendage (°)</td><td>${fmt(dip,1)}</td></tr>
+      <tr><td>Normale</td><td>${fmt(nx,3)}, ${fmt(ny,3)}, ${fmt(nz,3)}</td></tr>
+    </tbody></table>`;
+  } else { ms.textContent='—'; }
+}
+function updatePreviews(){
+  const sEl=document.getElementById('preview-samples'); const iEl=document.getElementById('preview-intervals');
+  if(!samples.length) sEl.innerHTML='<em>Aucun échantillon.</em>'; else{
+    const cols=['HoleID','From','To','X','Y','Z','Au','Length','Dist']; let h='<table><thead><tr>'+cols.map(c=>`<th>${c}</th>`).join('')+'</tr></thead><tbody>';
+    const N=Math.min(150,samples.length); for(let i=0;i<N;i++){ const r=samples[i]; h+='<tr>'+cols.map(c=>`<td>${c==='HoleID'?r[c]:fmt(r[c])}</td>`).join('')+'</tr>'; } h+='</tbody></table>'; sEl.innerHTML=h;
+  }
+  if(!intervals.length) iEl.innerHTML='<em>Aucun intervalle.</em>'; else{
+    const cols=['HoleID','From','To','Length','AuMean','SterileLen']; let h='<table><thead><tr>'+cols.map(c=>`<th>${c}</th>`).join('')+'</tr></thead><tbody>';
+    const N=Math.min(150,intervals.length); for(let i=0;i<N;i++){ const r=intervals[i]; h+='<tr>'+cols.map(c=>`<td>${c==='HoleID'?r[c]:fmt(r[c])}</td>`).join('')+'</tr>'; } h+='</tbody></table>'; iEl.innerHTML=h;
+  }
+}
+function updateResults(){
+  const el=document.getElementById('results'); if(!intervals.length){ el.innerHTML='<em>Aucun intervalle.</em>'; return; }
+  const cols=['HoleID','From','To','Length','AuMean','SterileLen']; let h='<div class="scroll"><table><thead><tr>'+cols.map(c=>`<th>${c}</th>`).join('')+'</tr></thead><tbody>';
+  const rows=intervals.slice().sort((a,b)=>a.HoleID.localeCompare(b.HoleID));
+  for(const r of rows){ h+='<tr>'+cols.map(c=>`<td>${c==='HoleID'?r[c]:fmt(r[c])}</td>`).join('')+'</tr>'; } h+='</tbody></table></div>'; el.innerHTML=h;
+}
+function refreshAll(){ computeDistances(); meshS=triangles.length?planeStruct(triangles):null; updateStats(); updatePreviews(); updateResults(); render(); }
+
+// ---------- DXF ----------
+function parseDXF(text){
+  const lines=text.replace(/\r\n/g,'\n').replace(/\r/g,'\n').split('\n');
+  const tris=[]; let i=0;
+  while(i<lines.length-1){
+    const code=lines[i].trim(); const value=(lines[i+1]||'').trim();
+    if(code==='0' && value.toUpperCase()==='3DFACE'){
+      let vx=[],vy=[],vz=[]; let j=i+2;
+      while(j<lines.length){
+        const c=lines[j].trim(); const v=(lines[j+1]||'').trim();
+        if(c==='0') break;
+        if(c==='10') vx[0]=parseFloat(v); if(c==='20') vy[0]=parseFloat(v); if(c==='30') vz[0]=parseFloat(v);
+        if(c==='11') vx[1]=parseFloat(v); if(c==='21') vy[1]=parseFloat(v); if(c==='31') vz[1]=parseFloat(v);
+        if(c==='12') vx[2]=parseFloat(v); if(c==='22') vy[2]=parseFloat(v); if(c==='32') vz[2]=parseFloat(v);
+        if(c==='13') vx[3]=parseFloat(v); if(c==='23') vy[3]=parseFloat(v); if(c==='33') vz[3]=parseFloat(v);
+        j+=2;
+      }
+      const v1=[vx[0],vy[0],vz[0]], v2=[vx[1],vy[1],vz[1]], v3=[vx[2],vy[2],vz[2]];
+      if(isFinite(v1[0])&&isFinite(v2[0])&&isFinite(v3[0])) tris.push([v1,v2,v3]);
+      i=j; continue;
+    }
+    i+=2;
+  }
+  return {triangles:tris};
+}
+
+// ---------- Demo mesh ----------
+function demoMesh(){
+  const tris=[]; const nx=60, ny=60, spacing=100;
+  const zf=(x,y)=>-25 + 2.0*Math.sin(x*0.0015) + 2.0*Math.cos(y*0.0015);
+  for(let i=0;i<nx;i++){
+    for(let j=0;j<ny;j++){
+      const x0=(i-nx/2)*spacing, x1=(i+1-nx/2)*spacing;
+      const y0=(j-ny/2)*spacing, y1=(j+1-ny/2)*spacing;
+      const z00=zf(x0,y0), z01=zf(x0,y1), z10=zf(x1,y0), z11=zf(x1,y1);
+      const v00=[x0,y0,z00], v01=[x0,y1,z01], v10=[x1,y0,z10], v11=[x1,y1,z11];
+      tris.push([v00,v10,v11]); tris.push([v00,v11,v01]);
+    }
+  }
+  return tris;
+}
+
+// ---------- Canvas 3D ----------
+let camera={cx:0,cy:0,cz:-25, rx:0.6, ry:0.9, dist:1400, fov:900, panX:0, panY:0};
+function extentAll(){ const pts=[]; for(const s of samples) pts.push([s.X,s.Y,s.Z]); for(const t of triangles){ pts.push(t[0],t[1],t[2]); } return extent(pts); }
 function fitView(){
   const e=extentAll(); if(!e) return;
   camera.cx=(e.minX+e.maxX)/2; camera.cy=(e.minY+e.maxY)/2; camera.cz=(e.minZ+e.maxZ)/2;
@@ -435,7 +469,7 @@ function render(){
   }
 }
 
-// Interactions
+// ---------- Handlers UI ----------
 let dragging=false, rotating=false, lx=0,ly=0;
 canvas.addEventListener('mousedown',e=>{dragging=true; rotating=e.shiftKey; lx=e.clientX; ly=e.clientY;});
 addEventListener('mouseup',()=>dragging=false);
@@ -443,20 +477,18 @@ addEventListener('mousemove',e=>{ if(!dragging) return; const dx=e.clientX-lx, d
   if(rotating){ camera.ry+=dx*0.005; camera.rx+=dy*0.005; } else { camera.panX+=dx; camera.panY+=dy; } render(); });
 canvas.addEventListener('wheel',e=>{ e.preventDefault(); camera.dist *= (1 + e.deltaY*0.001); render(); }, {passive:false});
 
-// UI handlers
-document.getElementById('btn-capture').addEventListener('click',()=> download('neocanvas.png', canvas.toDataURL('image/png')));
+document.getElementById('btn-capture').addEventListener('click',()=> download(`neocanvas_${meshName}.png`, canvas.toDataURL('image/png')));
 document.getElementById('btn-fit').addEventListener('click', fitView);
 document.getElementById('btn-reset').addEventListener('click', ()=>{
-  samples=[]; triangles=[]; intervals=[]; grid=null; meshS=null; lastSampleStats=null; lastIntervalStats=null;
+  samples=[]; intervals=[]; triangles=[]; grid=null; meshS=null; lastSampleStats=null; lastIntervalStats=null; meshName='mesh_demo';
   document.getElementById('results').innerHTML=''; document.getElementById('preview-samples').innerHTML=''; document.getElementById('preview-intervals').innerHTML='';
   document.getElementById('stats-samples').textContent='-'; document.getElementById('stats-intervals').textContent='-'; document.getElementById('mesh-struct').textContent='-';
-  render();
-  log('Réinitialisé.');
+  render(); log('Réinitialisé.');
 });
 
-// Demo data
+// ---------- Echantillons démo ----------
 function randomNormal(mu=0,s=1){ let u=0,v=0; while(u===0)u=Math.random(); while(v===0)v=Math.random(); return mu+s*Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v); }
-function ensureMesh(){ if(!triangles.length){ triangles=demoMesh(); grid=SpatialGrid(triangles,100); meshS=planeStruct(triangles);} }
+function ensureMesh(){ if(!triangles.length){ triangles=demoMesh(); grid=SpatialGrid(triangles,100); meshS=planeStruct(triangles); meshName='mesh_demo'; } }
 document.getElementById('btn-generate-demo').addEventListener('click', ()=>{
   ensureMesh();
   const holes=[], N=10, spacing=200, off=(N-1)*spacing/2; let id=0;
@@ -474,19 +506,17 @@ document.getElementById('btn-generate-demo').addEventListener('click', ()=>{
       depth=to;
     }
   }
-  samples=out; computeDistances(); meshS=planeStruct(triangles);
-  updateStats(); updatePreviews(); updateResults(); fitView(); render();
-  log(`Démo: ${samples.length} échantillons, ${triangles.length} triangles.`);
+  samples=out; refreshAll(); fitView(); log(`Démo: ${samples.length} échantillons, ${triangles.length} triangles (mesh: ${meshName}).`);
 });
 
-// DXF import/export
+// ---------- Import/Export DXF ----------
 document.getElementById('file-dxf').addEventListener('change', async (e)=>{
   const f=e.target.files[0]; if(!f) return;
   const text=await readFileAsText(f);
   const d=parseDXF(text);
   triangles=d.triangles; grid=SpatialGrid(triangles,100); meshS=planeStruct(triangles);
-  computeDistances(); updateStats(); updatePreviews(); updateResults(); fitView(); render();
-  log(`DXF: ${triangles.length} triangles.`);
+  meshName = (f.name || 'mesh').replace(/\.dxf$/i,'').replace(/\s+/g,'_');
+  refreshAll(); fitView(); log(`DXF: ${triangles.length} triangles (mesh: ${meshName}).`);
 });
 document.getElementById('btn-export-mesh').addEventListener('click', ()=>{
   if(!triangles.length) return alert('Aucun mesh');
@@ -499,10 +529,10 @@ document.getElementById('btn-export-mesh').addEventListener('click', ()=>{
     dxf+=`13\n${fmt(t[2][0])}\n23\n${fmt(t[2][1])}\n33\n${fmt(t[2][2])}\n`;
   }
   dxf+='0\nENDSEC\n0\nEOF\n';
-  download('mesh.dxf', dxf, 'application/dxf');
+  download(`${meshName||'mesh'}.dxf`, dxf, 'application/dxf');
 });
 
-// Density/densify
+// ---------- Densité / Densifier ----------
 document.getElementById('btn-check-density').addEventListener('click', ()=>{
   if(!triangles.length) return alert('Aucun mesh');
   const L=meanEdgeL(triangles), thr=parseFloat(document.getElementById('densify-threshold').value);
@@ -513,11 +543,23 @@ document.getElementById('btn-densify').addEventListener('click', ()=>{
   const target=parseFloat(document.getElementById('densify-target').value);
   const before=triangles.length; triangles=densify(triangles, target); const after=triangles.length;
   grid=SpatialGrid(triangles, Math.max(50,target*4)); meshS=planeStruct(triangles);
-  computeDistances(); updateStats(); updatePreviews(); updateResults(); fitView(); render();
-  log(`Densifié: ${before} -> ${after} triangles`);
+  // suffixe de version du mesh
+  meshName = `${meshName}_dens${String(target).replace(/\./g,'_')}`;
+  refreshAll(); fitView(); log(`Densifié: ${before} -> ${after} triangles (mesh: ${meshName}).`);
 });
 
-// Samples import/mapping
+// ---------- Import/mapping échantillons ----------
+const sel={holeid:'col-holeid',from:'col-from',to:'col-to',x:'col-x',y:'col-y',z:'col-z',au:'col-au',length:'col-length'};
+const mapEls=Object.fromEntries(Object.entries(sel).map(([k,id])=>[k,document.getElementById(id)]));
+let mapping={holeid:'HoleID',from:'From',to:'To',x:'X',y:'Y',z:'Z',au:'Au',length:'Length'};
+function populateMapping(headers){
+  for(const k in mapEls){
+    const el=mapEls[k]; el.innerHTML='';
+    for(const h of headers){ const opt=document.createElement('option'); opt.value=h; opt.textContent=h; el.appendChild(opt); }
+    const pref = Object.values(mapping).find(v=>v.toLowerCase()===k.toLowerCase())||k;
+    el.value = headers.includes(pref) ? pref : headers[0] || '';
+  }
+}
 document.getElementById('sep').addEventListener('change', e=> sepChoice=e.target.value);
 document.getElementById('dec').addEventListener('change', e=> decChoice=e.target.value);
 document.getElementById('file-samples').addEventListener('change', async (e)=>{
@@ -544,90 +586,43 @@ document.getElementById('btn-apply-mapping').addEventListener('click', ()=>{
     if(!isFinite(o.Length)||o.Length<=0) o.Length = o.To - o.From;
     if([o.From,o.To,o.X,o.Y,o.Z,o.Au,o.Length].every(v=>isFinite(v))) out.push(o);
   }
-  samples=out; computeDistances(); updateStats(); updatePreviews(); updateResults(); fitView(); render();
-  log(`Mapping appliqué: ${samples.length} échantillons valides.`);
+  samples=out; refreshAll(); fitView(); log(`Mapping appliqué: ${samples.length} échantillons valides.`);
 });
 
-// Stats/preview/results
-function statsTableHTML(title, map){
-  let html=`<h3 style="margin:0 0 6px">${title}</h3><div class="scroll"><table><thead><tr>
-  <th>Variable</th><th>Minimum</th><th>Moyenne</th><th>Médiane</th><th>Maximum</th><th>Somme</th><th>Nombre</th>
-  </tr></thead><tbody>`;
-  for(const k of Object.keys(map)){ const s=map[k]; html+=`<tr><td>${k}</td><td>${fmt(s.min)}</td><td>${fmt(s.mean)}</td><td>${fmt(s.median)}</td><td>${fmt(s.max)}</td><td>${fmt(s.sum)}</td><td>${s.n||0}</td></tr>`; }
-  html+='</tbody></table></div>'; return html;
-}
-function updateStats(){
-  const au=samples.map(s=>s.Au).filter(Number.isFinite);
-  const ln=samples.map(s=>s.Length).filter(Number.isFinite);
-  const di=samples.map(s=>s.Dist).filter(Number.isFinite);
-  lastSampleStats={'Au (g/t)':basicStats(au),'Longueur (m)':basicStats(ln),'Distance au mesh (m)':basicStats(di)};
-  document.getElementById('stats-samples').innerHTML=statsTableHTML('Statistiques – Échantillons', lastSampleStats);
-
-  if(intervals.length){
-    lastIntervalStats={'AuMean (g/t)':basicStats(intervals.map(i=>i.AuMean)),'Longueur (m)':basicStats(intervals.map(i=>i.Length)),'Sterile Length (m)':basicStats(intervals.map(i=>i.SterileLen))};
-  } else {
-    lastIntervalStats={'AuMean (g/t)':{n:0,min:null,mean:null,median:null,max:null,sum:0},'Longueur (m)':{n:0,min:null,mean:null,median:null,max:null,sum:0},'Sterile Length (m)':{n:0,min:null,mean:null,median:null,max:null,sum:0}};
-  }
-  document.getElementById('stats-intervals').innerHTML=statsTableHTML('Statistiques – Intervalles', lastIntervalStats);
-
-  const ms=document.getElementById('mesh-struct');
-  if(meshS){ const {strike,dip,dipDir,nx,ny,nz}=meshS;
-    ms.innerHTML=`<table><tbody>
-      <tr><td>Strike (°)</td><td>${fmt(strike,1)}</td></tr>
-      <tr><td>Dip dir (°)</td><td>${fmt(dipDir,1)}</td></tr>
-      <tr><td>Pendage (°)</td><td>${fmt(dip,1)}</td></tr>
-      <tr><td>Normale</td><td>${fmt(nx,3)}, ${fmt(ny,3)}, ${fmt(nz,3)}</td></tr>
-    </tbody></table>`;
-  } else { ms.textContent='—'; }
-}
-function updatePreviews(){
-  const sEl=document.getElementById('preview-samples'); const iEl=document.getElementById('preview-intervals');
-  if(!samples.length) sEl.innerHTML='<em>Aucun échantillon.</em>'; else{
-    const cols=['HoleID','From','To','X','Y','Z','Au','Length','Dist']; let h='<table><thead><tr>'+cols.map(c=>`<th>${c}</th>`).join('')+'</tr></thead><tbody>';
-    const N=Math.min(150,samples.length); for(let i=0;i<N;i++){ const r=samples[i]; h+='<tr>'+cols.map(c=>`<td>${c==='HoleID'?r[c]:fmt(r[c])}</td>`).join('')+'</tr>'; } h+='</tbody></table>'; sEl.innerHTML=h;
-  }
-  if(!intervals.length) iEl.innerHTML='<em>Aucun intervalle.</em>'; else{
-    const cols=['HoleID','From','To','Length','AuMean','SterileLen']; let h='<table><thead><tr>'+cols.map(c=>`<th>${c}</th>`).join('')+'</tr></thead><tbody>';
-    const N=Math.min(150,intervals.length); for(let i=0;i<N;i++){ const r=intervals[i]; h+='<tr>'+cols.map(c=>`<td>${c==='HoleID'?r[c]:fmt(r[c])}</td>`).join('')+'</tr>'; } h+='</tbody></table>'; iEl.innerHTML=h;
-  }
-}
-function updateResults(){
-  const el=document.getElementById('results'); if(!intervals.length){ el.innerHTML='<em>Aucun intervalle.</em>'; return; }
-  const cols=['HoleID','From','To','Length','AuMean','SterileLen']; let h='<div class="scroll"><table><thead><tr>'+cols.map(c=>`<th>${c}</th>`).join('')+'</tr></thead><tbody>';
-  const rows=intervals.slice().sort((a,b)=>a.HoleID.localeCompare(b.HoleID));
-  for(const r of rows){ h+='<tr>'+cols.map(c=>`<td>${c==='HoleID'?r[c]:fmt(r[c])}</td>`).join('')+'</tr>'; } h+='</tbody></table></div>'; el.innerHTML=h;
-}
-
-// Buttons
-document.getElementById('btn-run').addEventListener('click', ()=>{
-  if(!samples.length) return alert('Générez la démo ou importez des échantillons.');
-  const params={cutoff:parseFloat(document.getElementById('cutoff').value), maxDist:parseFloat(document.getElementById('max-dist').value), dilution:parseFloat(document.getElementById('dilution').value), agg:document.getElementById('agg').value};
-  intervals = computeIntervals(params); updateStats(); updatePreviews(); updateResults(); render(); log(`Intervalles: ${intervals.length}`);
-});
+// ---------- Export CSV ----------
 document.getElementById('btn-export-intervals').addEventListener('click', ()=>{
-  if(!intervals.length) return alert('Aucun intervalle');
-  const rows=[['HoleID','From','To','Length','AuMean','SterileLen']]; for(const r of intervals) rows.push([r.HoleID,fmt(r.From),fmt(r.To),fmt(r.Length),fmt(r.AuMean),fmt(r.SterileLen)]);
-  download('intervalles.csv', csv(rows, ','), 'text/csv');
+  if(!intervals.length) return alert('Aucun intervalle.');
+  const rows=[['HoleID','From','To','Length','AuMean','SterileLen']];
+  for(const r of intervals) rows.push([r.HoleID,fmt(r.From),fmt(r.To),fmt(r.Length),fmt(r.AuMean),fmt(r.SterileLen)]);
+  download(`intervalles_${meshName||'mesh'}.csv`, csv(rows, ','), 'text/csv');
 });
 document.getElementById('btn-export-demo').addEventListener('click', ()=>{
-  if(!samples.length) return alert('Aucune donnée');
-  const rows=[['HoleID','From','To','X','Y','Z','Au','Length','Dist']]; for(const s of samples) rows.push([s.HoleID,fmt(s.From),fmt(s.To),fmt(s.X),fmt(s.Y),fmt(s.Z),fmt(s.Au),fmt(s.Length),fmt(s.Dist)]);
-  download('echantillons.csv', csv(rows, ','), 'text/csv');
+  if(!samples.length) return alert('Aucune donnée.');
+  const rows=[['HoleID','From','To','X','Y','Z','Au','Length','Dist']]; for(const s of samples)
+    rows.push([s.HoleID,fmt(s.From),fmt(s.To),fmt(s.X),fmt(s.Y),fmt(s.Z),fmt(s.Au),fmt(s.Length),fmt(s.Dist)]);
+  download(`echantillons_${meshName||'mesh'}.csv`, csv(rows, ','), 'text/csv');
 });
 document.getElementById('btn-export-stats-samples').addEventListener('click', ()=>{
   if(!lastSampleStats) return alert('Aucune statistique');
   const rows=[['Variable','Minimum','Moyenne','Médiane','Maximum','Somme','Nombre']];
   for(const k of Object.keys(lastSampleStats)){ const s=lastSampleStats[k]; rows.push([k,fmt(s.min),fmt(s.mean),fmt(s.median),fmt(s.max),fmt(s.sum),s.n||0]); }
-  download('stats_echantillons.csv', csv(rows, ','), 'text/csv');
+  download(`stats_echantillons_${meshName||'mesh'}.csv`, csv(rows, ','), 'text/csv');
 });
 document.getElementById('btn-export-stats-intervals').addEventListener('click', ()=>{
   if(!lastIntervalStats) return alert('Aucune statistique');
   const rows=[['Variable','Minimum','Moyenne','Médiane','Maximum','Somme','Nombre']];
   for(const k of Object.keys(lastIntervalStats)){ const s=lastIntervalStats[k]; rows.push([k,fmt(s.min),fmt(s.mean),fmt(s.median),fmt(s.max),fmt(s.sum),s.n||0]); }
-  download('stats_intervalles.csv', csv(rows, ','), 'text/csv');
+  download(`stats_intervalles_${meshName||'mesh'}.csv`, csv(rows, ','), 'text/csv');
 });
 
-// Start
+// ---------- Paramètres / Calcul intervalles ----------
+document.getElementById('btn-run').addEventListener('click', ()=>{
+  if(!samples.length) return alert('Générez la démo ou importez des échantillons.');
+  const params={cutoff:parseFloat(document.getElementById('cutoff').value), maxDist:parseFloat(document.getElementById('max-dist').value), dilution:parseFloat(document.getElementById('dilution').value), agg:document.getElementById('agg').value};
+  intervals = computeIntervals(params); updateStats(); updatePreviews(); updateResults(); render(); log(`Intervalles: ${intervals.length} (mesh: ${meshName}).`);
+});
+
+// ---------- Start ----------
 render();
 </script>
 </body>
